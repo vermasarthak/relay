@@ -250,3 +250,67 @@ def test_provider_timeout_post_commit_and_reconciliation(session):
     # Verified succeeded after reconciliation
     session.refresh(ticket)
     assert ticket.status == TicketStatus.SUCCEEDED
+
+def test_account_state_change_invalidates_execution(session):
+    ticket = Ticket(
+        tenant_id="ten_test",
+        external_ticket_id="TKT-ACC-1",
+        customer_email="alice@customer.com",
+        customer_name="Alice",
+        subject="Cancel plan",
+        body="Cancel plan",
+        status=TicketStatus.APPROVED
+    )
+    session.add(ticket)
+    session.flush()
+
+    args = {"customer_email": "alice@customer.com"}
+    args_hash = compute_args_hash(args)
+    proposal = Proposal(
+        tenant_id="ten_test",
+        ticket_id=ticket.id,
+        version=1,
+        action_type=ActionType.CANCEL_SUBSCRIPTION,
+        action_arguments=args,
+        args_hash=args_hash,
+        explanation="Cancel plan",
+        account_state_snapshot={"acc_alice": {"subscription_status": "active", "plan_tier": "standard"}},
+        status=ProposalStatus.APPROVED
+    )
+    session.add(proposal)
+    session.flush()
+
+    approval = Approval(
+        tenant_id="ten_test",
+        proposal_id=proposal.id,
+        proposal_version=1,
+        args_hash=args_hash,
+        is_approved=True
+    )
+    session.add(approval)
+
+    # Customer account is modified out-of-band before worker execution
+    acc = session.query(CustomerAccount).filter(CustomerAccount.customer_email == "alice@customer.com").first()
+    proposal.account_state_snapshot = {acc.id: {"subscription_status": "active", "plan_tier": "standard"}}
+    acc.subscription_status = "canceled"
+    session.commit()
+
+    exec_job = Job(
+        tenant_id="ten_test",
+        ticket_id=ticket.id,
+        job_type="execute_sandbox_action",
+        status=JobStatus.PENDING,
+        idempotency_key="job_exec_acc_test",
+        payload={"proposal_id": proposal.id}
+    )
+    session.add(exec_job)
+    session.commit()
+
+    worker = DurableWorker(session, worker_id="wrk_acc")
+    job = worker.claim_next_job()
+    assert job is not None
+    res = worker.execute_job(job.id)
+    assert res is False
+    session.refresh(ticket)
+    assert ticket.status == TicketStatus.AWAITING_REVIEW
+

@@ -181,6 +181,7 @@ class Proposal(Base):
     missing_information = Column(Text, nullable=True)
     cited_evidence_ids = Column(JSON, default=list, nullable=False) # List of EvidenceReference IDs
     policy_version_snapshot = Column(JSON, default=dict, nullable=False) # Mapping of doc_id -> version
+    account_state_snapshot = Column(JSON, default=dict, nullable=False) # Mapping of account_id -> {status, plan, rate}
     status = Column(Enum(ProposalStatus), default=ProposalStatus.PENDING, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     created_by = Column(String(64), default="relay_ai_pipeline", nullable=False)

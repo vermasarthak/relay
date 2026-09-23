@@ -30,6 +30,8 @@ const App: React.FC = () => {
   const [editExplanation, setEditExplanation] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
 
+  const [csrfToken, setCsrfToken] = useState<string>(localStorage.getItem('relay_csrf_token') || '');
+
   // Login state
   const [loginEmail, setLoginEmail] = useState('alice@acme.com');
   const [loginPassword, setLoginPassword] = useState('admin123456');
@@ -58,8 +60,12 @@ const App: React.FC = () => {
       if (!res.ok) throw new Error('Invalid credentials');
       const data = await res.json();
       setToken(data.access_token);
+      setCsrfToken(data.csrf_token || '');
       setUser(data.user);
       localStorage.setItem('relay_token', data.access_token);
+      if (data.csrf_token) {
+        localStorage.setItem('relay_csrf_token', data.csrf_token);
+      }
       setErrorMsg('');
     } catch (err: any) {
       setErrorMsg(err.message || 'Login failed');
@@ -131,7 +137,8 @@ const App: React.FC = () => {
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
-            'x-tenant-id': activeTenant
+            'x-tenant-id': activeTenant,
+            'x-csrf-token': csrfToken
           },
           body: JSON.stringify({ is_approved: approved, reviewer_notes: 'Reviewed via UI console.' })
         }
@@ -156,7 +163,8 @@ const App: React.FC = () => {
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token}`,
-            'x-tenant-id': activeTenant
+            'x-tenant-id': activeTenant,
+            'x-csrf-token': csrfToken
           },
           body: JSON.stringify({
             action_type: resolution.active_proposal.action_type,

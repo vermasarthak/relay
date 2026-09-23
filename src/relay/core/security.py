@@ -65,6 +65,14 @@ def get_current_user_and_tenant(
     else:
         # Fall back to secure cookie
         token = request.cookies.get(settings.session_cookie_name)
+        # Protect browser mutations against CSRF when using cookie session auth
+        if token and request.method in ("POST", "PUT", "PATCH", "DELETE"):
+            # Exclude login route from CSRF
+            if not request.url.path.endswith("/auth/login"):
+                csrf_header = request.headers.get("x-csrf-token")
+                csrf_cookie = request.cookies.get("relay_csrf_token")
+                if not csrf_header or not csrf_cookie or csrf_header != csrf_cookie:
+                    raise HTTPException(status_code=403, detail="CSRF token missing or invalid for browser mutation")
 
     if not token:
         raise HTTPException(status_code=401, detail="Authentication credentials required")

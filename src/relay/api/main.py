@@ -95,7 +95,7 @@ def login(req: UserLoginRequest, response: Response, db: Session = Depends(get_d
 
     token = create_session_token(user.id, user.email, tenant_ids)
 
-    # Set secure HttpOnly cookie
+    # Set secure HttpOnly session cookie
     response.set_cookie(
         key=settings.session_cookie_name,
         value=token,
@@ -104,9 +104,21 @@ def login(req: UserLoginRequest, response: Response, db: Session = Depends(get_d
         samesite="lax",
         max_age=settings.session_expire_hours * 3600
     )
+    
+    # Set accessible CSRF cookie for browser frontends
+    csrf_token = f"csrf_{uuid.uuid4().hex}"
+    response.set_cookie(
+        key="relay_csrf_token",
+        value=csrf_token,
+        httponly=False,
+        secure=settings.app_env == "production",
+        samesite="lax",
+        max_age=settings.session_expire_hours * 3600
+    )
 
     return {
         "access_token": token,
+        "csrf_token": csrf_token,
         "token_type": "bearer",
         "user": {
             "id": user.id,

@@ -106,7 +106,8 @@ class DurableWorker:
             job = self.db.query(Job).filter(Job.id == job_id).first()
             if job:
                 ticket = self.db.query(Ticket).filter(Ticket.id == job.ticket_id).first()
-                if "invalidat" in str(exc).lower() or "policy change" in str(exc).lower():
+                exc_str = str(exc).lower()
+                if "invalidat" in exc_str or "policy change" in exc_str or "account state" in exc_str:
                     if ticket:
                         ticket.status = TicketStatus.AWAITING_REVIEW
                     proposal_id = job.payload.get("proposal_id")
@@ -160,10 +161,27 @@ class DurableWorker:
             evidence_list=evidence_payload
         )
 
-        # 3. Policy Version Snapshot
+        # 3. Policy & Customer Account Snapshot
         doc_snapshot = {}
         for d in self.db.query(Document).filter(Document.tenant_id == ticket.tenant_id).all():
             doc_snapshot[d.id] = d.current_version
+
+        acc_snapshot = {}
+        cust_acc = self.db.query(CustomerAccount).filter(
+            CustomerAccount.tenant_id == ticket.tenant_id,
+            CustomerAccount.customer_email == ticket.customer_email
+        ).first()
+        if cust_acc:
+            acc_snapshot[cust_acc.id] = {
+                "subscription_status": cust_acc.subscription_status,
+                "plan_tier": cust_acc.plan_tier,
+                "monthly_rate_cents": cust_acc.monthly_rate_cents,
+                "days_since_billing": cust_acc.days_since_billing
+            }
+
+        # Validate cited evidence IDs (must exist in retrieved set and belong to tenant)
+        retrieved_ids = {e["id"] for e in evidence_payload}
+        valid_cited_ids = [cid for cid in model_out.cited_evidence_ids if cid in retrieved_ids]
 
         # 4. Create Proposal
         args_hash = compute_args_hash(model_out.action_arguments)
@@ -176,8 +194,9 @@ class DurableWorker:
             args_hash=args_hash,
             explanation=model_out.explanation,
             missing_information=model_out.missing_information,
-            cited_evidence_ids=model_out.cited_evidence_ids,
+            cited_evidence_ids=valid_cited_ids,
             policy_version_snapshot=doc_snapshot,
+            account_state_snapshot=acc_snapshot,
             status=ProposalStatus.PENDING
         )
         self.db.add(proposal)
@@ -222,12 +241,21 @@ class DurableWorker:
             raise ValueError("Approval invalidation: Proposal arguments or version were modified")
 
         # 2. Recheck underlying Policy and Customer Account State
-        for doc_id, snap_ver in proposal.policy_version_snapshot.items():
+        for doc_id, snap_ver in (proposal.policy_version_snapshot or {}).items():
             doc = self.db.query(Document).filter(Document.id == doc_id).first()
             if doc and doc.current_version != snap_ver:
                 ticket.status = TicketStatus.AWAITING_REVIEW
                 proposal.status = ProposalStatus.PENDING
                 raise ValueError("Policy change detected: Underwriting policy was updated after approval")
+
+        for acc_id, snap_data in (proposal.account_state_snapshot or {}).items():
+            acc = self.db.query(CustomerAccount).filter(CustomerAccount.id == acc_id).first()
+            if acc:
+                if (acc.subscription_status != snap_data.get("subscription_status") or
+                    acc.plan_tier != snap_data.get("plan_tier")):
+                    ticket.status = TicketStatus.AWAITING_REVIEW
+                    proposal.status = ProposalStatus.PENDING
+                    raise ValueError("Account state changed: Customer subscription or plan was altered after approval")
 
         ticket.status = TicketStatus.EXECUTING
         self.db.flush()
