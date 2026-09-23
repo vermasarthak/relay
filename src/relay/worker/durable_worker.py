@@ -1,0 +1,327 @@
+import time
+import uuid
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import Optional, List
+from sqlalchemy.orm import Session
+from sqlalchemy import or_, and_
+
+from relay.models.entities import (
+    Job, JobStatus, JobAttempt, Ticket, TicketStatus, Proposal, ProposalStatus,
+    Approval, ActionReceipt, ActionType, AuditEvent, CustomerAccount, Document, DocumentVersion
+)
+from relay.core.security import compute_args_hash
+from relay.services.retriever import EvidenceRetriever
+from relay.services.model_adapter import get_model_provider
+from relay.sandbox.provider import sandbox_provider
+
+logger = logging.getLogger("relay.worker")
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+class DurableWorker:
+    def __init__(self, db: Session, worker_id: Optional[str] = None, lease_duration_seconds: int = 30):
+        self.db = db
+        self.worker_id = worker_id or f"wrk_{uuid.uuid4().hex[:8]}"
+        self.lease_duration_seconds = lease_duration_seconds
+
+    def claim_next_job(self) -> Optional[Job]:
+        """
+        Atomically leases the next available job using lease fencing tokens.
+        Ensures concurrent workers cannot double-claim or execute stale leases.
+        """
+        now = utc_now()
+        job = self.db.query(Job).filter(
+            Job.next_attempt_at <= now,
+            or_(
+                Job.status == JobStatus.PENDING,
+                Job.status == JobStatus.RETRY_SCHEDULED,
+                and_(Job.status == JobStatus.LEASED, Job.leased_until < now) # Stale lease recovery
+            )
+        ).with_for_update(skip_locked=True).first()
+
+        if not job:
+            return None
+
+        # Increment fencing token and assign lease
+        job.fencing_token += 1
+        job.worker_id = self.worker_id
+        job.status = JobStatus.LEASED
+        job.leased_until = now + timedelta(seconds=self.lease_duration_seconds)
+        job.attempt_count += 1
+        
+        # Log attempt
+        attempt = JobAttempt(
+            job_id=job.id,
+            attempt_number=job.attempt_count,
+            worker_id=self.worker_id,
+            fencing_token=job.fencing_token,
+            status="running",
+            started_at=now
+        )
+        self.db.add(attempt)
+        self.db.commit()
+        self.db.refresh(job)
+        return job
+
+    def execute_job(self, job_id: str) -> bool:
+        job = self.db.query(Job).filter(Job.id == job_id).first()
+        if not job or job.worker_id != self.worker_id:
+            return False
+
+        current_token = job.fencing_token
+
+        try:
+            if job.job_type == "analyze_ticket":
+                self._handle_analyze_ticket(job)
+            elif job.job_type == "execute_sandbox_action":
+                self._handle_execute_sandbox_action(job)
+            elif job.job_type == "reconcile_action":
+                self._handle_reconcile_action(job)
+            else:
+                raise ValueError(f"Unknown job_type: {job.job_type}")
+
+            # Commit success
+            job.status = JobStatus.COMPLETED
+            job.updated_at = utc_now()
+            
+            # Update attempt record
+            attempt = self.db.query(JobAttempt).filter(
+                JobAttempt.job_id == job.id,
+                JobAttempt.fencing_token == current_token
+            ).first()
+            if attempt:
+                attempt.status = "success"
+                attempt.completed_at = utc_now()
+
+            self.db.commit()
+            return True
+
+        except Exception as exc:
+            logger.error(f"Worker {self.worker_id} error executing job {job.id}: {exc}")
+            self.db.rollback()
+
+            # Re-fetch and record failure / reset state if validation error
+            job = self.db.query(Job).filter(Job.id == job_id).first()
+            if job:
+                ticket = self.db.query(Ticket).filter(Ticket.id == job.ticket_id).first()
+                if "invalidat" in str(exc).lower() or "policy change" in str(exc).lower():
+                    if ticket:
+                        ticket.status = TicketStatus.AWAITING_REVIEW
+                    proposal_id = job.payload.get("proposal_id")
+                    if proposal_id:
+                        p = self.db.query(Proposal).filter(Proposal.id == proposal_id).first()
+                        if p:
+                            p.status = ProposalStatus.PENDING
+                    job.status = JobStatus.FAILED
+                else:
+                    if job.attempt_count >= job.max_attempts:
+                        job.status = JobStatus.FAILED
+                    else:
+                        job.status = JobStatus.RETRY_SCHEDULED
+                        backoff = min(300, 2 ** job.attempt_count)
+                        job.next_attempt_at = utc_now() + timedelta(seconds=backoff)
+
+                attempt = self.db.query(JobAttempt).filter(
+                    JobAttempt.job_id == job.id,
+                    JobAttempt.fencing_token == current_token
+                ).first()
+                if attempt:
+                    attempt.status = "failed"
+                    attempt.error_message = str(exc)
+                    attempt.completed_at = utc_now()
+
+                self.db.commit()
+            return False
+
+    def _handle_analyze_ticket(self, job: Job):
+        ticket = self.db.query(Ticket).filter(Ticket.id == job.ticket_id).first()
+        if not ticket:
+            return
+
+        ticket.status = TicketStatus.ANALYZING
+
+        # 1. Retrieve evidence
+        retriever = EvidenceRetriever(self.db, ticket.tenant_id)
+        evidence_items = retriever.retrieve_for_ticket(ticket.id, ticket.customer_email, f"{ticket.subject} {ticket.body}")
+
+        evidence_payload = [
+            {"id": e.id, "title": e.source_title, "excerpt": e.excerpt, "source_type": e.source_type}
+            for e in evidence_items
+        ]
+
+        # 2. Run model pipeline
+        model = get_model_provider()
+        model_out = model.resolve_ticket(
+            ticket_subject=ticket.subject,
+            ticket_body=ticket.body,
+            customer_email=ticket.customer_email,
+            evidence_list=evidence_payload
+        )
+
+        # 3. Policy Version Snapshot
+        doc_snapshot = {}
+        for d in self.db.query(Document).filter(Document.tenant_id == ticket.tenant_id).all():
+            doc_snapshot[d.id] = d.current_version
+
+        # 4. Create Proposal
+        args_hash = compute_args_hash(model_out.action_arguments)
+        proposal = Proposal(
+            tenant_id=ticket.tenant_id,
+            ticket_id=ticket.id,
+            version=1,
+            action_type=model_out.proposed_action,
+            action_arguments=model_out.action_arguments,
+            args_hash=args_hash,
+            explanation=model_out.explanation,
+            missing_information=model_out.missing_information,
+            cited_evidence_ids=model_out.cited_evidence_ids,
+            policy_version_snapshot=doc_snapshot,
+            status=ProposalStatus.PENDING
+        )
+        self.db.add(proposal)
+
+        if model_out.proposed_action == ActionType.ABSTAIN:
+            ticket.status = TicketStatus.ABSTAINED
+        else:
+            ticket.status = TicketStatus.AWAITING_REVIEW
+
+        ticket.category = model_out.category
+        
+        # Audit Log
+        event = AuditEvent(
+            tenant_id=ticket.tenant_id,
+            ticket_id=ticket.id,
+            event_type="proposal_generated",
+            actor=self.worker_id,
+            correlation_id=job.idempotency_key,
+            details={"action": model_out.proposed_action.value, "category": model_out.category}
+        )
+        self.db.add(event)
+
+    def _handle_execute_sandbox_action(self, job: Job):
+        ticket = self.db.query(Ticket).filter(Ticket.id == job.ticket_id).first()
+        if not ticket:
+            return
+
+        proposal_id = job.payload.get("proposal_id")
+        proposal = self.db.query(Proposal).filter(Proposal.id == proposal_id).first()
+        if not proposal:
+            raise ValueError("Proposal not found for execution job")
+
+        # 1. Verify Approval Integrity
+        approval = self.db.query(Approval).filter(Approval.proposal_id == proposal.id).first()
+        if not approval or not approval.is_approved:
+            raise ValueError("Execution rejected: Proposal is not approved")
+
+        current_hash = compute_args_hash(proposal.action_arguments)
+        if current_hash != approval.args_hash or proposal.version != approval.proposal_version:
+            ticket.status = TicketStatus.AWAITING_REVIEW
+            proposal.status = ProposalStatus.PENDING
+            raise ValueError("Approval invalidation: Proposal arguments or version were modified")
+
+        # 2. Recheck underlying Policy and Customer Account State
+        for doc_id, snap_ver in proposal.policy_version_snapshot.items():
+            doc = self.db.query(Document).filter(Document.id == doc_id).first()
+            if doc and doc.current_version != snap_ver:
+                ticket.status = TicketStatus.AWAITING_REVIEW
+                proposal.status = ProposalStatus.PENDING
+                raise ValueError("Policy change detected: Underwriting policy was updated after approval")
+
+        ticket.status = TicketStatus.EXECUTING
+        self.db.flush()
+
+        # 3. Call Sandbox Action Provider outside DB transaction locks
+        sim_mode = job.payload.get("simulation_mode")
+        provider_res = sandbox_provider.execute_action(
+            action_type=proposal.action_type.value,
+            idempotency_key=job.idempotency_key,
+            payload=proposal.action_arguments,
+            simulation_mode=sim_mode
+        )
+
+        # 4. Handle Result & Indeterminate Statuses
+        if provider_res.status == "timeout_post_commit":
+            # Indeterminate state -> Trigger Reconciliation
+            ticket.status = TicketStatus.NEEDS_RECONCILIATION
+            receipt = ActionReceipt(
+                tenant_id=ticket.tenant_id,
+                job_id=job.id,
+                action_type=proposal.action_type,
+                idempotency_key=job.idempotency_key,
+                provider="relay_local_sandbox",
+                status="needs_reconciliation",
+                request_payload=proposal.action_arguments,
+                response_payload={"error": provider_res.error_message},
+                verified=False
+            )
+            self.db.add(receipt)
+            return
+
+        if not provider_res.success:
+            ticket.status = TicketStatus.FAILED
+            receipt = ActionReceipt(
+                tenant_id=ticket.tenant_id,
+                job_id=job.id,
+                action_type=proposal.action_type,
+                idempotency_key=job.idempotency_key,
+                provider="relay_local_sandbox",
+                status="failed",
+                request_payload=proposal.action_arguments,
+                response_payload={"error": provider_res.error_message},
+                verified=False
+            )
+            self.db.add(receipt)
+            return
+
+        # Success - Apply state changes
+        if proposal.action_type == ActionType.CANCEL_SUBSCRIPTION:
+            acc = self.db.query(CustomerAccount).filter(
+                CustomerAccount.tenant_id == ticket.tenant_id,
+                CustomerAccount.customer_email == ticket.customer_email
+            ).first()
+            if acc:
+                acc.subscription_status = "canceled"
+
+        ticket.status = TicketStatus.SUCCEEDED
+        receipt = ActionReceipt(
+            tenant_id=ticket.tenant_id,
+            job_id=job.id,
+            action_type=proposal.action_type,
+            idempotency_key=job.idempotency_key,
+            provider="relay_local_sandbox",
+            provider_transaction_id=provider_res.transaction_id,
+            status="succeeded",
+            request_payload=proposal.action_arguments,
+            response_payload=provider_res.data,
+            verified=True
+        )
+        self.db.add(receipt)
+
+        event = AuditEvent(
+            tenant_id=ticket.tenant_id,
+            ticket_id=ticket.id,
+            event_type="action_executed",
+            actor=self.worker_id,
+            correlation_id=job.idempotency_key,
+            details={"action": proposal.action_type.value, "tx_id": provider_res.transaction_id}
+        )
+        self.db.add(event)
+
+    def _handle_reconcile_action(self, job: Job):
+        ticket = self.db.query(Ticket).filter(Ticket.id == job.ticket_id).first()
+        target_key = job.payload.get("target_idempotency_key")
+        
+        status_record = sandbox_provider.lookup_status(target_key)
+        if status_record and status_record.get("status") == "succeeded":
+            if ticket:
+                ticket.status = TicketStatus.SUCCEEDED
+            receipt = self.db.query(ActionReceipt).filter(ActionReceipt.idempotency_key == target_key).first()
+            if receipt:
+                receipt.status = "succeeded"
+                receipt.provider_transaction_id = status_record.get("transaction_id")
+                receipt.verified = True
+        else:
+            if ticket:
+                ticket.status = TicketStatus.FAILED
