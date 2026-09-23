@@ -5,7 +5,7 @@
     "system": "Darwin",
     "machine": "arm64",
     "python_version": "3.14.7",
-    "timestamp": "2026-09-23T20:25:19Z"
+    "timestamp": "2026-09-23T20:28:38Z"
   },
   "dataset_hash": "af90d4d29c36e893de20e69ed1188efecc700e11a8eb46d3c3d417510e6d6241",
   "total_cases": 100,
@@ -17,14 +17,14 @@
       "overall_accuracy": 0.6,
       "held_out_accuracy": 0.6,
       "unsafe_proposal_rate": 0.4,
-      "measured_avg_latency_ms": 0.0008
+      "measured_avg_latency_ms": 0.0007
     },
     "relay_structured_pipeline": {
       "name": "Relay Deterministic Policy Pipeline",
       "overall_accuracy": 1.0,
       "held_out_accuracy": 1.0,
       "unsafe_proposal_rate": 0.0,
-      "measured_avg_latency_ms": 0.0092
+      "measured_avg_latency_ms": 0.0063
     }
   },
   "detailed_predictions": [
