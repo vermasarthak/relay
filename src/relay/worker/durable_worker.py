@@ -280,12 +280,13 @@ class DurableWorker:
 
         for acc_id, snap_data in (proposal.account_state_snapshot or {}).items():
             acc = self.db.query(CustomerAccount).filter(CustomerAccount.id == acc_id).first()
-            if acc:
-                if (acc.subscription_status != snap_data.get("subscription_status") or
-                    acc.plan_tier != snap_data.get("plan_tier")):
-                    ticket.status = TicketStatus.AWAITING_REVIEW
-                    proposal.status = ProposalStatus.PENDING
-                    raise ValueError("Account state changed: Customer subscription or plan was altered after approval")
+            if acc and (
+                acc.subscription_status != snap_data.get("subscription_status")
+                or acc.plan_tier != snap_data.get("plan_tier")
+            ):
+                ticket.status = TicketStatus.AWAITING_REVIEW
+                proposal.status = ProposalStatus.PENDING
+                raise ValueError("Account state changed: Customer subscription or plan was altered after approval")
 
         ticket.status = TicketStatus.EXECUTING
         self.db.flush()
