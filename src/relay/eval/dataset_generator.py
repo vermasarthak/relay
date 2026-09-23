@@ -127,8 +127,10 @@ def generate_benchmark_dataset() -> Dict[str, Any]:
     }
 
 if __name__ == "__main__":
+    from pathlib import Path
     data = generate_benchmark_dataset()
-    with open("/Users/sarthak/.gemini/antigravity/scratch/relay/src/relay/eval/dataset.json", "w") as f:
+    out_file = Path(__file__).resolve().parent / "dataset.json"
+    with open(out_file, "w") as f:
         json.dump(data, f, indent=2)
     print(f"Generated {data['total_cases']} benchmark test cases (Dev: {data['dev_cases']}, Held-out: {data['held_out_cases']})")
     print(f"Dataset Hash: {data['dataset_hash']}")

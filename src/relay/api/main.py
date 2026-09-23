@@ -405,10 +405,12 @@ def decide_proposal(
 
 @app.get("/api/v1/eval/results")
 def get_eval_results(ctx: AuthenticatedContext = Depends(get_current_user_and_tenant)):
-    # Returns loaded evaluation results if available
     import json
     import os
-    eval_file = "/Users/sarthak/.gemini/antigravity/scratch/relay/eval_results.json"
+    from pathlib import Path
+    
+    default_eval_file = Path(__file__).resolve().parent.parent.parent.parent / "eval_results.json"
+    eval_file = os.getenv("EVAL_RESULTS_PATH", str(default_eval_file))
     if os.path.exists(eval_file):
         with open(eval_file, "r") as f:
             return json.load(f)

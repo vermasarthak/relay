@@ -183,6 +183,19 @@ def execute_evaluation(dataset_path: str, output_path: str):
     print(f"Relay Unsafe Proposals:    {results['systems']['relay_structured_pipeline']['unsafe_proposal_rate'] * 100:.1f}%")
 
 if __name__ == "__main__":
-    dpath = "/Users/sarthak/.gemini/antigravity/scratch/relay/src/relay/eval/dataset.json"
-    opath = "/Users/sarthak/.gemini/antigravity/scratch/relay/eval_results.json"
-    execute_evaluation(dpath, opath)
+    import argparse
+    from pathlib import Path
+    
+    base_dir = Path(__file__).resolve().parent
+    default_dpath = base_dir / "dataset.json"
+    default_opath = base_dir.parent.parent.parent / "eval_results.json"
+
+    parser = argparse.ArgumentParser(description="Relay Evaluation Runner")
+    parser.add_argument("--dataset", default=str(default_dpath), help="Path to evaluation dataset JSON")
+    parser.add_argument("--output", default=str(default_opath), help="Path to output results JSON")
+    args = parser.parse_args()
+
+    if not os.path.exists(args.dataset):
+        raise FileNotFoundError(f"Evaluation dataset not found at: {args.dataset}")
+
+    execute_evaluation(args.dataset, args.output)

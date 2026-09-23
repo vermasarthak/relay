@@ -1,5 +1,7 @@
 import pytest
 import time
+import os
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -444,6 +446,22 @@ def test_job_failure_releases_lease_and_worker_id(session):
     assert job.worker_id is None
     assert job.leased_until is None
     assert job.attempt_count == 1
+
+def test_eval_runner_portability_across_working_dirs(tmp_path):
+    import subprocess
+    import sys
+    
+    # Run evaluation script from a foreign working directory
+    res = subprocess.run(
+        [sys.executable, "-m", "relay.eval.eval_runner"],
+        cwd=str(tmp_path),
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "src")},
+        capture_output=True,
+        text=True
+    )
+    assert res.returncode == 0
+    assert "Evaluation Completed" in res.stdout
+
 
 
 
