@@ -162,3 +162,59 @@ def test_full_resolution_workflow(client, db_session):
     assert len(final_detail["receipts"]) == 1
     assert final_detail["receipts"][0]["verified"] is True
     assert final_detail["receipts"][0]["status"] == "succeeded"
+
+def test_rbac_and_proposal_edit_snapshot_preservation(client, db_session):
+    # Create member user in Tenant A
+    usr_member = User(id="usr_member", email="member@a.com", full_name="Member A", hashed_password=hash_password("pw123"))
+    db_session.add(usr_member)
+    db_session.flush()
+    db_session.add(Membership(tenant_id="ten_a", user_id=usr_member.id, role=UserRole.MEMBER))
+    db_session.commit()
+
+    # Login member
+    res_mem = client.post("/api/v1/auth/login", json={"email": "member@a.com", "password": "pw123"})
+    token_mem = res_mem.json()["access_token"]
+    headers_mem = {"Authorization": f"Bearer {token_mem}", "x-tenant-id": "ten_a"}
+
+    # Ingest ticket
+    tkt_res = client.post("/api/v1/tickets", headers=headers_mem, json={
+        "external_ticket_id": "TKT-RBAC-1",
+        "customer_email": "cust@a.com",
+        "customer_name": "Customer One",
+        "subject": "Cancel subscription",
+        "body": "Please cancel my subscription."
+    })
+    tkt_id = tkt_res.json()["id"]
+
+    # Analyze ticket
+    worker = DurableWorker(db_session, worker_id="test_worker_rbac")
+    job = worker.claim_next_job()
+    assert worker.execute_job(job.id) is True
+
+    # Get proposal
+    detail = client.get(f"/api/v1/tickets/{tkt_id}/resolution", headers=headers_mem).json()
+    prop_id = detail["active_proposal"]["id"]
+
+    # Member attempts to approve -> 403 Forbidden
+    decide_fail = client.post(
+        f"/api/v1/tickets/{tkt_id}/proposals/{prop_id}/decide",
+        headers=headers_mem,
+        json={"is_approved": True}
+    )
+    assert decide_fail.status_code == 403
+
+    # Edit proposal and verify account_state_snapshot is preserved
+    edit_res = client.post(
+        f"/api/v1/tickets/{tkt_id}/proposals/{prop_id}/edit",
+        headers=headers_mem,
+        json={
+            "action_type": "cancel_subscription",
+            "action_arguments": {"customer_email": "cust@a.com", "reason": "user_confirmed"},
+            "explanation": "Edited by human operator"
+        }
+    )
+    assert edit_res.status_code == 200
+    new_prop = edit_res.json()
+    assert new_prop["version"] == 2
+    assert new_prop["account_state_snapshot"] is not None
+

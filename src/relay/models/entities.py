@@ -6,10 +6,11 @@ from sqlalchemy import (
     Enum, JSON, Index, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
+from relay.core.clock import get_clock
 from relay.db.session import Base
 
 def utc_now():
-    return datetime.now(timezone.utc)
+    return get_clock().now()
 
 def gen_id(prefix=""):
     return f"{prefix}{uuid.uuid4().hex[:16]}"

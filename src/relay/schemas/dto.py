@@ -68,6 +68,8 @@ class ProposalResponse(BaseModel):
     explanation: str
     missing_information: Optional[str] = None
     cited_evidence_ids: List[str]
+    policy_version_snapshot: Optional[Dict[str, Any]] = None
+    account_state_snapshot: Optional[Dict[str, Any]] = None
     status: ProposalStatus
     created_at: datetime
     created_by: str

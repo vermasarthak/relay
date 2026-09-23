@@ -9,6 +9,12 @@ class EvidenceRetriever:
         self.tenant_id = tenant_id
 
     def retrieve_for_ticket(self, ticket_id: str, customer_email: str, text: str) -> List[EvidenceReference]:
+        # Purge stale evidence items for this ticket if re-analyzing
+        self.db.query(EvidenceReference).filter(
+            EvidenceReference.tenant_id == self.tenant_id,
+            EvidenceReference.ticket_id == ticket_id
+        ).delete(synchronize_session=False)
+
         evidence_items: List[EvidenceReference] = []
 
         # 1. Lookup Customer Account state

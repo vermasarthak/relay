@@ -21,10 +21,24 @@ from relay.core.security import (
     get_current_user_and_tenant, AuthenticatedContext, compute_args_hash
 )
 
+from relay.core.logging import setup_structured_logging, redact_sensitive_text
+from relay.core.clock import get_clock
+
+# Initialize structured logging
+setup_structured_logging()
+
 # Auto-create tables for local testing
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Relay API", version="1.0.0")
+
+@app.middleware("http")
+async def correlation_id_middleware(request: Request, call_next):
+    correlation_id = request.headers.get("X-Correlation-ID") or f"corr_{uuid.uuid4().hex[:12]}"
+    request.state.correlation_id = correlation_id
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = correlation_id
+    return response
 
 app.add_middleware(
     CORSMiddleware,
@@ -54,7 +68,10 @@ def get_operational_metrics(
     ctx: AuthenticatedContext = Depends(get_current_user_and_tenant),
     db: Session = Depends(get_db)
 ):
-    """Real-time operational queue and reconciliation backlog metrics."""
+    """Real-time operational queue age, pending count, and reconciliation backlog metrics."""
+    clock = get_clock()
+    now = clock.now()
+
     total_tickets = db.query(Ticket).filter(Ticket.tenant_id == ctx.tenant.id).count()
     awaiting_review = db.query(Ticket).filter(
         Ticket.tenant_id == ctx.tenant.id,
@@ -73,13 +90,29 @@ def get_operational_metrics(
         Job.status == JobStatus.FAILED
     ).count()
 
+    # Calculate oldest pending job age
+    oldest_pending_job = db.query(Job).filter(
+        Job.tenant_id == ctx.tenant.id,
+        Job.status == JobStatus.PENDING
+    ).order_by(Job.created_at.asc()).first()
+
+    oldest_pending_job_age_seconds = 0.0
+    if oldest_pending_job and oldest_pending_job.created_at:
+        created_at = oldest_pending_job.created_at
+        if not created_at.tzinfo:
+            from datetime import timezone
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        current_now = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+        oldest_pending_job_age_seconds = max(0.0, (current_now - created_at).total_seconds())
+
     return {
         "tenant_id": ctx.tenant.id,
         "total_tickets": total_tickets,
         "awaiting_review": awaiting_review,
         "reconciliation_backlog": reconciliation_backlog,
         "pending_jobs": pending_jobs,
-        "failed_jobs": failed_jobs
+        "failed_jobs": failed_jobs,
+        "oldest_pending_job_age_seconds": round(oldest_pending_job_age_seconds, 2)
     }
 
 # --- AUTH ROUTES ---
@@ -307,6 +340,7 @@ def edit_proposal(
         explanation=req.explanation,
         cited_evidence_ids=proposal.cited_evidence_ids,
         policy_version_snapshot=proposal.policy_version_snapshot,
+        account_state_snapshot=proposal.account_state_snapshot,
         status=ProposalStatus.PENDING,
         created_by=ctx.user.id
     )
@@ -323,6 +357,10 @@ def decide_proposal(
     ctx: AuthenticatedContext = Depends(get_current_user_and_tenant),
     db: Session = Depends(get_db)
 ):
+    # Enforce Role-Based Access Control: Members cannot approve/reject proposals
+    if ctx.role not in ("admin", "reviewer"):
+        raise HTTPException(status_code=403, detail="Only reviewers or admins can approve or reject proposals")
+
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id, Ticket.tenant_id == ctx.tenant.id).first()
     proposal = db.query(Proposal).filter(Proposal.id == proposal_id, Proposal.tenant_id == ctx.tenant.id).first()
 

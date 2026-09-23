@@ -7,22 +7,22 @@
 
 ---
 
-## 🌟 Overview
+## Overview
 
-Relay solves customer account access and billing requests through a durable, multi-tenant architecture designed to turn uncertain LLM outputs into authorized, idempotent, and recoverable real-world operations.
+Relay processes customer account access and billing workflows through a multi-tenant, audit-logged architecture designed to convert model proposals into verified, idempotent operations.
 
 ### Key Capabilities
-- **Multi-Tenant Session Auth**: Server-side JWT sessions with secure cookies and strict tenant authorization scoping across every query and event.
+- **Multi-Tenant Session Auth**: Server-side JWT sessions with secure cookies and tenant authorization scoping across every query and event.
 - **Evidence Retrieval Engine**: Combines versioned underwriting policy documents and structured account facts.
 - **Structured Proposal & Policy Validation**: Strict Pydantic models with deterministic policy boundary checks, automatic abstention on ambiguity/missing data, and prompt injection defense.
 - **Human-in-the-Loop Review**: Cryptographic binding of reviewer approvals to proposal parameter hashes (`SHA256`). Editing a proposal immediately invalidates prior approvals.
-- **Postgres-Backed Leased Worker**: Atomic lease claims with monotonic fencing tokens to prevent split-brain execution across concurrent workers.
-- **Local Sandbox Action Provider**: Fully isolated action ledger simulating successes, rejections, pre-commit timeouts, and post-commit timeouts with full reconciliation.
+- **Leased Durable Worker**: Atomic lease claims with monotonic fencing tokens to prevent split-brain execution across concurrent workers.
+- **Local Sandbox Action Provider**: Fully isolated action ledger simulating successes, rejections, pre-commit timeouts, and post-commit timeouts with reconciliation.
 - **Empirical Evaluation Benchmark**: 100 test cases (60 dev, 40 held-out) comparing unconstrained single-call baseline against Relay pipeline across 5 scenario families.
 
 ---
 
-## 🚀 Quickstart
+## Quickstart
 
 ### 1. Requirements & Setup
 ```bash
@@ -56,7 +56,7 @@ PYTHONPATH=src python src/relay/eval/eval_runner.py
 
 ---
 
-## 📊 Benchmark Results
+## Benchmark Results
 
 | Metric | Baseline System A (Single Prompt) | Relay System B (Retrieved & Validated) |
 | :--- | :--- | :--- |

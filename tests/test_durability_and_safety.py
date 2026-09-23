@@ -250,6 +250,15 @@ def test_provider_timeout_post_commit_and_reconciliation(session):
     # Verified succeeded after reconciliation
     session.refresh(ticket)
     assert ticket.status == TicketStatus.SUCCEEDED
+    
+    # Verify customer account status updated to canceled
+    acc = session.query(CustomerAccount).filter(CustomerAccount.customer_email == "alice@customer.com").first()
+    assert acc is not None
+    assert acc.subscription_status == "canceled"
+
+    # Verify audit event emitted
+    reconciled_events = [e for e in ticket.events if e.event_type == "action_reconciled"]
+    assert len(reconciled_events) == 1
 
 def test_account_state_change_invalidates_execution(session):
     ticket = Ticket(
@@ -311,6 +320,131 @@ def test_account_state_change_invalidates_execution(session):
     assert job is not None
     res = worker.execute_job(job.id)
     assert res is False
-    session.refresh(ticket)
     assert ticket.status == TicketStatus.AWAITING_REVIEW
+
+
+def test_lease_fencing_and_clock_time_travel(session):
+    from relay.core.clock import TestClock
+    clock = TestClock()
+
+    ticket = Ticket(
+        tenant_id="ten_test",
+        external_ticket_id="TKT-FENCE-1",
+        customer_email="alice@customer.com",
+        customer_name="Alice",
+        subject="Query",
+        body="Help with order",
+        status=TicketStatus.RECEIVED
+    )
+    session.add(ticket)
+    session.flush()
+
+    job = Job(
+        tenant_id="ten_test",
+        ticket_id=ticket.id,
+        job_type="analyze_ticket",
+        status=JobStatus.PENDING,
+        idempotency_key="job_fence_test_001",
+        next_attempt_at=clock.now()
+    )
+    session.add(job)
+    session.commit()
+
+    # Worker 1 claims with 30s lease
+    worker1 = DurableWorker(session, worker_id="wrk_slow", lease_duration_seconds=30, clock=clock)
+    claimed1 = worker1.claim_next_job()
+    assert claimed1 is not None
+    assert claimed1.worker_id == "wrk_slow"
+    assert claimed1.fencing_token == 1
+
+    # Fast forward clock 35 seconds (lease expires)
+    clock.advance(35)
+
+    # Worker 2 claims the stale lease
+    worker2 = DurableWorker(session, worker_id="wrk_fast", lease_duration_seconds=30, clock=clock)
+    claimed2 = worker2.claim_next_job()
+    assert claimed2 is not None
+    assert claimed2.worker_id == "wrk_fast"
+    assert claimed2.fencing_token == 2
+
+    # Worker 2 executes successfully
+    assert worker2.execute_job(claimed2.id) is True
+
+    # Worker 1 wakes up late and attempts to execute with stale lease/token
+    assert worker1.execute_job(claimed1.id) is False
+
+def test_retriever_purges_stale_evidence_on_reanalysis(session):
+    from relay.services.retriever import EvidenceRetriever
+    from relay.models.entities import EvidenceReference
+
+    ticket = Ticket(
+        tenant_id="ten_test",
+        external_ticket_id="TKT-RET-1",
+        customer_email="alice@customer.com",
+        customer_name="Alice",
+        subject="Refund please",
+        body="Refund me within 14 days",
+        status=TicketStatus.RECEIVED
+    )
+    session.add(ticket)
+    session.commit()
+
+    retriever = EvidenceRetriever(session, "ten_test")
+    # First analysis run
+    evi1 = retriever.retrieve_for_ticket(ticket.id, ticket.customer_email, ticket.body)
+    assert len(evi1) > 0
+    count1 = session.query(EvidenceReference).filter(EvidenceReference.ticket_id == ticket.id).count()
+    assert count1 == len(evi1)
+
+    # Re-analysis run
+    evi2 = retriever.retrieve_for_ticket(ticket.id, ticket.customer_email, ticket.body)
+    assert len(evi2) > 0
+    count2 = session.query(EvidenceReference).filter(EvidenceReference.ticket_id == ticket.id).count()
+    # Ensure evidence was replaced rather than accumulated
+    assert count2 == len(evi2)
+
+def test_job_failure_releases_lease_and_worker_id(session):
+    from relay.core.clock import TestClock
+    clock = TestClock()
+
+    ticket = Ticket(
+        tenant_id="ten_test",
+        external_ticket_id="TKT-FAIL-1",
+        customer_email="alice@customer.com",
+        customer_name="Alice",
+        subject="Unknown action",
+        body="Trigger failure",
+        status=TicketStatus.RECEIVED
+    )
+    session.add(ticket)
+    session.commit()
+
+    job = Job(
+        tenant_id="ten_test",
+        ticket_id=ticket.id,
+        job_type="unknown_failing_type",
+        status=JobStatus.PENDING,
+        idempotency_key="job_fail_test_001",
+        next_attempt_at=clock.now()
+    )
+    session.add(job)
+    session.commit()
+
+    worker = DurableWorker(session, worker_id="wrk_fail_test", clock=clock)
+    claimed = worker.claim_next_job()
+    assert claimed is not None
+    assert claimed.worker_id == "wrk_fail_test"
+
+    # Execution fails due to unknown job_type
+    res = worker.execute_job(claimed.id)
+    assert res is False
+
+    session.refresh(job)
+    assert job.status == JobStatus.RETRY_SCHEDULED
+    assert job.worker_id is None
+    assert job.leased_until is None
+    assert job.attempt_count == 1
+
+
+
 

@@ -11,27 +11,30 @@ from relay.models.entities import (
     Approval, ActionReceipt, ActionType, AuditEvent, CustomerAccount, Document, DocumentVersion
 )
 from relay.core.security import compute_args_hash
+from relay.core.clock import Clock, get_clock
 from relay.services.retriever import EvidenceRetriever
 from relay.services.model_adapter import get_model_provider
 from relay.sandbox.provider import sandbox_provider
+from relay.core.config import settings
 
 logger = logging.getLogger("relay.worker")
 
-def utc_now():
-    return datetime.now(timezone.utc)
-
 class DurableWorker:
-    def __init__(self, db: Session, worker_id: Optional[str] = None, lease_duration_seconds: int = 30):
+    def __init__(self, db: Session, worker_id: Optional[str] = None, lease_duration_seconds: int = 30, clock: Optional[Clock] = None):
         self.db = db
         self.worker_id = worker_id or f"wrk_{uuid.uuid4().hex[:8]}"
         self.lease_duration_seconds = lease_duration_seconds
+        self.clock = clock or get_clock()
+
+    def utc_now(self) -> datetime:
+        return self.clock.now()
 
     def claim_next_job(self) -> Optional[Job]:
         """
         Atomically leases the next available job using lease fencing tokens.
         Ensures concurrent workers cannot double-claim or execute stale leases.
         """
-        now = utc_now()
+        now = self.utc_now()
         job = self.db.query(Job).filter(
             Job.next_attempt_at <= now,
             or_(
@@ -65,10 +68,22 @@ class DurableWorker:
         self.db.refresh(job)
         return job
 
-    def execute_job(self, job_id: str) -> bool:
+    def execute_job(self, job_id: str, expected_fencing_token: Optional[int] = None) -> bool:
         job = self.db.query(Job).filter(Job.id == job_id).first()
+        now = self.utc_now()
         if not job or job.worker_id != self.worker_id:
             return False
+
+        if expected_fencing_token is not None and job.fencing_token != expected_fencing_token:
+            logger.warning(f"Fencing token mismatch for job {job_id}: expected {expected_fencing_token}, found {job.fencing_token}")
+            return False
+
+        if job.leased_until:
+            leased_until = job.leased_until if job.leased_until.tzinfo else job.leased_until.replace(tzinfo=timezone.utc)
+            current_now = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+            if leased_until < current_now:
+                logger.warning(f"Worker {self.worker_id} attempting to execute expired lease on job {job_id}")
+                return False
 
         current_token = job.fencing_token
 
@@ -84,7 +99,7 @@ class DurableWorker:
 
             # Commit success
             job.status = JobStatus.COMPLETED
-            job.updated_at = utc_now()
+            job.updated_at = self.utc_now()
             
             # Update attempt record
             attempt = self.db.query(JobAttempt).filter(
@@ -93,7 +108,7 @@ class DurableWorker:
             ).first()
             if attempt:
                 attempt.status = "success"
-                attempt.completed_at = utc_now()
+                attempt.completed_at = self.utc_now()
 
             self.db.commit()
             return True
@@ -122,7 +137,12 @@ class DurableWorker:
                     else:
                         job.status = JobStatus.RETRY_SCHEDULED
                         backoff = min(300, 2 ** job.attempt_count)
-                        job.next_attempt_at = utc_now() + timedelta(seconds=backoff)
+                        job.next_attempt_at = self.utc_now() + timedelta(seconds=backoff)
+
+                # Clear lease on failure/retry so other workers can claim cleanly
+                job.worker_id = None
+                job.leased_until = None
+                job.updated_at = self.utc_now()
 
                 attempt = self.db.query(JobAttempt).filter(
                     JobAttempt.job_id == job.id,
@@ -131,7 +151,7 @@ class DurableWorker:
                 if attempt:
                     attempt.status = "failed"
                     attempt.error_message = str(exc)
-                    attempt.completed_at = utc_now()
+                    attempt.completed_at = self.utc_now()
 
                 self.db.commit()
             return False
@@ -153,7 +173,7 @@ class DurableWorker:
         ]
 
         # 2. Run model pipeline
-        model = get_model_provider()
+        model = get_model_provider(settings.model_provider)
         model_out = model.resolve_ticket(
             ticket_subject=ticket.subject,
             ticket_body=ticket.body,
@@ -345,11 +365,40 @@ class DurableWorker:
         if status_record and status_record.get("status") == "succeeded":
             if ticket:
                 ticket.status = TicketStatus.SUCCEEDED
+                action_type = status_record.get("action_type")
+                if action_type == ActionType.CANCEL_SUBSCRIPTION.value:
+                    acc = self.db.query(CustomerAccount).filter(
+                        CustomerAccount.tenant_id == ticket.tenant_id,
+                        CustomerAccount.customer_email == ticket.customer_email
+                    ).first()
+                    if acc:
+                        acc.subscription_status = "canceled"
+
             receipt = self.db.query(ActionReceipt).filter(ActionReceipt.idempotency_key == target_key).first()
             if receipt:
                 receipt.status = "succeeded"
                 receipt.provider_transaction_id = status_record.get("transaction_id")
                 receipt.verified = True
+
+            if ticket:
+                event = AuditEvent(
+                    tenant_id=ticket.tenant_id,
+                    ticket_id=ticket.id,
+                    event_type="action_reconciled",
+                    actor=self.worker_id,
+                    correlation_id=job.idempotency_key,
+                    details={"action": status_record.get("action_type"), "tx_id": status_record.get("transaction_id")}
+                )
+                self.db.add(event)
         else:
             if ticket:
                 ticket.status = TicketStatus.FAILED
+                event = AuditEvent(
+                    tenant_id=ticket.tenant_id,
+                    ticket_id=ticket.id,
+                    event_type="action_reconciliation_failed",
+                    actor=self.worker_id,
+                    correlation_id=job.idempotency_key,
+                    details={"target_idempotency_key": target_key}
+                )
+                self.db.add(event)
