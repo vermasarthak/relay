@@ -1,14 +1,14 @@
 import sys
 from os.path import abspath, dirname
+
 sys.path.insert(0, dirname(dirname(abspath(__file__))) + "/src")
 
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-from alembic import context
 
+from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 from relay.db.session import Base
-import relay.models.entities # Ensure all models are registered
 
 config = context.config
 

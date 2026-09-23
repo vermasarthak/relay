@@ -1,7 +1,7 @@
-import os
-from relay.db.session import SessionLocal, Base, engine
-from relay.models.entities import Tenant, User, Membership, UserRole, CustomerAccount, Document, DocumentVersion
 from relay.core.security import hash_password
+from relay.db.session import Base, SessionLocal, engine
+from relay.models.entities import CustomerAccount, Document, DocumentVersion, Membership, Tenant, User, UserRole
+
 
 def seed_database():
     Base.metadata.create_all(bind=engine)

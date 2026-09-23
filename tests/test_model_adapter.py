@@ -1,9 +1,12 @@
+
 import pytest
-import os
-from relay.services.model_adapter import (
-    DeterministicModelFake, GeminiModelAdapter, get_model_provider, ModelResolutionOutput
-)
+
 from relay.models.entities import ActionType
+from relay.services.model_adapter import (
+    DeterministicModelFake,
+    get_model_provider,
+)
+
 
 def test_deterministic_fake_prompt_injection_abstention():
     fake = DeterministicModelFake()

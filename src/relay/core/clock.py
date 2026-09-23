@@ -1,24 +1,22 @@
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
+
 
 class Clock(ABC):
     """Abstract clock interface for deterministic time management."""
     @abstractmethod
     def now(self) -> datetime:
         """Returns the current UTC timestamp."""
-        pass
 
     @abstractmethod
     def sleep(self, seconds: float) -> None:
         """Sleeps or advances time."""
-        pass
 
 
 class SystemClock(Clock):
     """Production system clock using real UTC time."""
     def now(self) -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     def sleep(self, seconds: float) -> None:
         import time
@@ -27,12 +25,12 @@ class SystemClock(Clock):
 
 class TestClock(Clock):
     """Deterministic, fast-forwardable clock for unit and durability testing."""
-    def __init__(self, initial_time: Optional[datetime] = None):
+    def __init__(self, initial_time: datetime | None = None):
         if initial_time is None:
-            self._current_time = datetime.now(timezone.utc)
+            self._current_time = datetime.now(UTC)
         else:
             if initial_time.tzinfo is None:
-                self._current_time = initial_time.replace(tzinfo=timezone.utc)
+                self._current_time = initial_time.replace(tzinfo=UTC)
             else:
                 self._current_time = initial_time
 
@@ -45,7 +43,7 @@ class TestClock(Clock):
 
     def set(self, new_time: datetime) -> None:
         if new_time.tzinfo is None:
-            self._current_time = new_time.replace(tzinfo=timezone.utc)
+            self._current_time = new_time.replace(tzinfo=UTC)
         else:
             self._current_time = new_time
 

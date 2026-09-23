@@ -1,15 +1,16 @@
-import bcrypt
 import hashlib
 import json
-from datetime import datetime, timedelta, timezone
-from typing import Optional, List
-from jose import jwt, JWTError
-from fastapi import HTTPException, Security, Depends, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from datetime import UTC, datetime, timedelta
+
+import bcrypt
+from fastapi import Depends, HTTPException, Request, Security
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError, jwt
 from sqlalchemy.orm import Session
+
 from relay.core.config import settings
 from relay.db.session import get_db
-from relay.models.entities import User, Membership, Tenant
+from relay.models.entities import Membership, Tenant, User
 
 security = HTTPBearer(auto_error=False)
 
@@ -25,8 +26,8 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     hashed_bytes = hashed_password.encode('utf-8')
     return bcrypt.checkpw(pwd_bytes, hashed_bytes)
 
-def create_session_token(user_id: str, email: str, tenant_ids: List[str]) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(hours=settings.session_expire_hours)
+def create_session_token(user_id: str, email: str, tenant_ids: list[str]) -> str:
+    expire = datetime.now(UTC) + timedelta(hours=settings.session_expire_hours)
     to_encode = {
         "sub": user_id,
         "email": email,
@@ -54,7 +55,7 @@ class AuthenticatedContext:
 
 def get_current_user_and_tenant(
     request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
+    credentials: HTTPAuthorizationCredentials | None = Security(security),
     db: Session = Depends(get_db)
 ) -> AuthenticatedContext:
     token = None

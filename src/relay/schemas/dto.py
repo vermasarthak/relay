@@ -1,12 +1,15 @@
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, List, Dict, Any
 from datetime import datetime
-from relay.models.entities import UserRole, TicketStatus, ActionType, ProposalStatus, JobStatus
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from relay.models.entities import ActionType, ProposalStatus, TicketStatus
+
 
 class TokenData(BaseModel):
     user_id: str
     email: str
-    tenant_ids: List[str]
+    tenant_ids: list[str]
 
 class UserLoginRequest(BaseModel):
     email: str
@@ -17,7 +20,7 @@ class UserResponse(BaseModel):
     id: str
     email: str
     full_name: str
-    memberships: List[Dict[str, Any]]
+    memberships: list[dict[str, Any]]
 
 class TenantResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -32,7 +35,7 @@ class TicketCreateRequest(BaseModel):
     customer_name: str = Field(..., max_length=128)
     subject: str = Field(..., max_length=255)
     body: str = Field(..., max_length=20000)
-    category: Optional[str] = "general"
+    category: str | None = "general"
 
 class TicketResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -63,26 +66,26 @@ class ProposalResponse(BaseModel):
     ticket_id: str
     version: int
     action_type: ActionType
-    action_arguments: Dict[str, Any]
+    action_arguments: dict[str, Any]
     args_hash: str
     explanation: str
-    missing_information: Optional[str] = None
-    cited_evidence_ids: List[str]
-    policy_version_snapshot: Optional[Dict[str, Any]] = None
-    account_state_snapshot: Optional[Dict[str, Any]] = None
+    missing_information: str | None = None
+    cited_evidence_ids: list[str]
+    policy_version_snapshot: dict[str, Any] | None = None
+    account_state_snapshot: dict[str, Any] | None = None
     status: ProposalStatus
     created_at: datetime
     created_by: str
 
 class ProposalEditRequest(BaseModel):
     action_type: ActionType
-    action_arguments: Dict[str, Any]
+    action_arguments: dict[str, Any]
     explanation: str
 
 class ApprovalDecisionRequest(BaseModel):
     is_approved: bool
-    rejection_reason: Optional[str] = None
-    reviewer_notes: Optional[str] = None
+    rejection_reason: str | None = None
+    reviewer_notes: str | None = None
 
 class ActionReceiptResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -90,18 +93,18 @@ class ActionReceiptResponse(BaseModel):
     action_type: ActionType
     idempotency_key: str
     provider: str
-    provider_transaction_id: Optional[str]
+    provider_transaction_id: str | None
     status: str
-    request_payload: Dict[str, Any]
-    response_payload: Dict[str, Any]
+    request_payload: dict[str, Any]
+    response_payload: dict[str, Any]
     verified: bool
     created_at: datetime
 
 class ResolutionDetailResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     ticket: TicketResponse
-    evidence: List[EvidenceItemResponse]
-    proposals: List[ProposalResponse]
-    active_proposal: Optional[ProposalResponse]
-    receipts: List[ActionReceiptResponse]
-    audit_events: List[Dict[str, Any]]
+    evidence: list[EvidenceItemResponse]
+    proposals: list[ProposalResponse]
+    active_proposal: ProposalResponse | None
+    receipts: list[ActionReceiptResponse]
+    audit_events: list[dict[str, Any]]

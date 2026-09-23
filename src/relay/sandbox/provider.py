@@ -1,14 +1,16 @@
-import uuid
 import time
-from typing import Dict, Any, Optional
+import uuid
+from typing import Any
+
 from pydantic import BaseModel
+
 
 class SandboxExecutionResult(BaseModel):
     success: bool
     status: str # succeeded, rejected, timeout_pre_commit, timeout_post_commit
-    transaction_id: Optional[str] = None
-    error_message: Optional[str] = None
-    data: Dict[str, Any] = {}
+    transaction_id: str | None = None
+    error_message: str | None = None
+    data: dict[str, Any] = {}
 
 class LocalSandboxActionProvider:
     """
@@ -21,14 +23,14 @@ class LocalSandboxActionProvider:
     """
     def __init__(self):
         # Ledger maps idempotency_key -> {status, tx_id, payload, committed}
-        self.ledger: Dict[str, Dict[str, Any]] = {}
+        self.ledger: dict[str, dict[str, Any]] = {}
 
     def execute_action(
         self,
         action_type: str,
         idempotency_key: str,
-        payload: Dict[str, Any],
-        simulation_mode: Optional[str] = None
+        payload: dict[str, Any],
+        simulation_mode: str | None = None
     ) -> SandboxExecutionResult:
         # 1. Idempotency Check
         if idempotency_key in self.ledger:
@@ -88,7 +90,7 @@ class LocalSandboxActionProvider:
             data=payload
         )
 
-    def lookup_status(self, idempotency_key: str) -> Optional[Dict[str, Any]]:
+    def lookup_status(self, idempotency_key: str) -> dict[str, Any] | None:
         """Reconciliation lookup for resolving indeterminate states."""
         return self.ledger.get(idempotency_key)
 

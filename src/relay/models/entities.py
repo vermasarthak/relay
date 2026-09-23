@@ -1,13 +1,12 @@
-from datetime import datetime, timezone
-import uuid
 import enum
-from sqlalchemy import (
-    Column, String, Text, Integer, Float, Boolean, DateTime, ForeignKey, 
-    Enum, JSON, Index, UniqueConstraint
-)
+import uuid
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, Enum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
+
 from relay.core.clock import get_clock
 from relay.db.session import Base
+
 
 def utc_now():
     return get_clock().now()

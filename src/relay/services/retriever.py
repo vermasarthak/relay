@@ -1,21 +1,23 @@
 import re
-from typing import List, Dict, Any
+
 from sqlalchemy.orm import Session
-from relay.models.entities import Document, DocumentVersion, CustomerAccount, EvidenceReference
+
+from relay.models.entities import CustomerAccount, Document, DocumentVersion, EvidenceReference
+
 
 class EvidenceRetriever:
     def __init__(self, db: Session, tenant_id: str):
         self.db = db
         self.tenant_id = tenant_id
 
-    def retrieve_for_ticket(self, ticket_id: str, customer_email: str, text: str) -> List[EvidenceReference]:
+    def retrieve_for_ticket(self, ticket_id: str, customer_email: str, text: str) -> list[EvidenceReference]:
         # Purge stale evidence items for this ticket if re-analyzing
         self.db.query(EvidenceReference).filter(
             EvidenceReference.tenant_id == self.tenant_id,
             EvidenceReference.ticket_id == ticket_id
         ).delete(synchronize_session=False)
 
-        evidence_items: List[EvidenceReference] = []
+        evidence_items: list[EvidenceReference] = []
 
         # 1. Lookup Customer Account state
         account = self.db.query(CustomerAccount).filter(

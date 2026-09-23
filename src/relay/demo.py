@@ -1,11 +1,12 @@
-import os
 import time
-from relay.db.session import SessionLocal, Base, engine
-from relay.models.entities import Ticket, TicketStatus, ActionType, Job, JobStatus, Proposal, ProposalStatus, Approval, CustomerAccount
-from relay.worker.durable_worker import DurableWorker
-from relay.db.seed import seed_database
+
 from relay.core.clock import TestClock
 from relay.core.security import compute_args_hash
+from relay.db.seed import seed_database
+from relay.db.session import SessionLocal
+from relay.models.entities import ActionType, Approval, Job, JobStatus, Proposal, ProposalStatus, Ticket, TicketStatus
+from relay.worker.durable_worker import DurableWorker
+
 
 def run_e2e_demo():
     print("==================================================================")

@@ -2,17 +2,21 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from relay.api.main import app
+from relay.core.security import hash_password
 from relay.db.session import Base, get_db
 from relay.models.entities import (
-    Tenant, User, Membership, UserRole, CustomerAccount, Document, DocumentVersion,
-    Ticket, Proposal, Approval, ActionType, TicketStatus
+    CustomerAccount,
+    Document,
+    DocumentVersion,
+    Membership,
+    Tenant,
+    User,
+    UserRole,
 )
-from relay.core.security import hash_password
 from relay.worker.durable_worker import DurableWorker
-
-from sqlalchemy.pool import StaticPool
 
 TEST_DB_URL = "sqlite:///:memory:"
 

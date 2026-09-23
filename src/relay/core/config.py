@@ -1,14 +1,15 @@
 import os
+
 from pydantic import BaseModel, Field
-from typing import Optional
+
 
 class Settings(BaseModel):
     app_env: str = Field(default_factory=lambda: os.getenv("APP_ENV", "development"))
     secret_key: str = Field(default_factory=lambda: os.getenv("SECRET_KEY", "relay-insecure-dev-secret-change-in-prod"))
     database_url: str = Field(default_factory=lambda: os.getenv("DATABASE_URL", "sqlite:///./relay.db"))
     model_provider: str = Field(default_factory=lambda: os.getenv("MODEL_PROVIDER", "deterministic_fake"))
-    gemini_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY"))
-    openai_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("OPENAI_API_KEY"))
+    gemini_api_key: str | None = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY"))
+    openai_api_key: str | None = Field(default_factory=lambda: os.getenv("OPENAI_API_KEY"))
     enable_demo_mode: bool = Field(default_factory=lambda: os.getenv("ENABLE_DEMO_MODE", "true").lower() == "true")
     session_cookie_name: str = "relay_session"
     session_expire_hours: int = 24

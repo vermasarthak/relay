@@ -1,20 +1,31 @@
-import pytest
-import time
 import os
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from relay.core.security import compute_args_hash, hash_password
 from relay.db.session import Base
 from relay.models.entities import (
-    Tenant, User, Membership, UserRole, CustomerAccount, Document, DocumentVersion,
-    Ticket, Proposal, ProposalStatus, Approval, ActionReceipt, ActionType, TicketStatus, Job, JobStatus
+    ActionType,
+    Approval,
+    CustomerAccount,
+    Document,
+    DocumentVersion,
+    Job,
+    JobStatus,
+    Membership,
+    Proposal,
+    ProposalStatus,
+    Tenant,
+    Ticket,
+    TicketStatus,
+    User,
+    UserRole,
 )
 from relay.worker.durable_worker import DurableWorker
-from relay.sandbox.provider import sandbox_provider
-from relay.core.security import compute_args_hash, hash_password
 
 TEST_DB_URL = "sqlite:///:memory:"
 
@@ -376,8 +387,8 @@ def test_lease_fencing_and_clock_time_travel(session):
     assert worker1.execute_job(claimed1.id) is False
 
 def test_retriever_purges_stale_evidence_on_reanalysis(session):
-    from relay.services.retriever import EvidenceRetriever
     from relay.models.entities import EvidenceReference
+    from relay.services.retriever import EvidenceRetriever
 
     ticket = Ticket(
         tenant_id="ten_test",
@@ -457,10 +468,11 @@ def test_eval_runner_portability_across_working_dirs(tmp_path):
         cwd=str(tmp_path),
         env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "src")},
         capture_output=True,
-        text=True
+        text=True,
+        check=False,
     )
     assert res.returncode == 0
-    assert "Evaluation Completed" in res.stdout
+    assert "Regression Suite Completed" in res.stdout or "Evaluation Completed" in res.stdout
 
 
 

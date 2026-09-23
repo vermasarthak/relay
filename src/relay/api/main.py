@@ -1,28 +1,46 @@
-from fastapi import FastAPI, Depends, HTTPException, Header, Response, Request
+import uuid
+from datetime import UTC
+
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import List, Optional, Dict, Any
-import uuid
 
+from relay.core.clock import get_clock
 from relay.core.config import settings
-from relay.db.session import get_db, Base, engine
+from relay.core.logging import setup_structured_logging
+from relay.core.security import (
+    AuthenticatedContext,
+    compute_args_hash,
+    create_session_token,
+    get_current_user_and_tenant,
+    verify_password,
+)
+from relay.db.session import Base, engine, get_db
 from relay.models.entities import (
-    Tenant, User, Membership, Ticket, TicketStatus, Document, DocumentVersion,
-    EvidenceReference, Proposal, ProposalStatus, Approval, Job, JobStatus,
-    ActionReceipt, AuditEvent, ActionType
+    ActionReceipt,
+    ActionType,
+    Approval,
+    AuditEvent,
+    EvidenceReference,
+    Job,
+    JobStatus,
+    Membership,
+    Proposal,
+    ProposalStatus,
+    Ticket,
+    TicketStatus,
+    User,
 )
 from relay.schemas.dto import (
-    UserLoginRequest, UserResponse, TenantResponse, TicketCreateRequest,
-    TicketResponse, ProposalResponse, ProposalEditRequest, ApprovalDecisionRequest,
-    ResolutionDetailResponse, EvidenceItemResponse, ActionReceiptResponse
+    ApprovalDecisionRequest,
+    EvidenceItemResponse,
+    ProposalEditRequest,
+    ProposalResponse,
+    ResolutionDetailResponse,
+    TicketCreateRequest,
+    TicketResponse,
+    UserLoginRequest,
 )
-from relay.core.security import (
-    hash_password, verify_password, create_session_token,
-    get_current_user_and_tenant, AuthenticatedContext, compute_args_hash
-)
-
-from relay.core.logging import setup_structured_logging, redact_sensitive_text
-from relay.core.clock import get_clock
 
 # Initialize structured logging
 setup_structured_logging()
@@ -61,7 +79,7 @@ def readiness_check(db: Session = Depends(get_db)):
         db.execute(Base.metadata.tables["tenants"].select().limit(1))
         return {"status": "ready", "database": "connected"}
     except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Database not ready: {str(e)}")
+        raise HTTPException(status_code=503, detail=f"Database not ready: {e!s}")
 
 @app.get("/api/v1/metrics")
 def get_operational_metrics(
@@ -100,9 +118,8 @@ def get_operational_metrics(
     if oldest_pending_job and oldest_pending_job.created_at:
         created_at = oldest_pending_job.created_at
         if not created_at.tzinfo:
-            from datetime import timezone
-            created_at = created_at.replace(tzinfo=timezone.utc)
-        current_now = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+            created_at = created_at.replace(tzinfo=UTC)
+        current_now = now if now.tzinfo else now.replace(tzinfo=UTC)
         oldest_pending_job_age_seconds = max(0.0, (current_now - created_at).total_seconds())
 
     return {
@@ -234,9 +251,9 @@ def ingest_ticket(
     db.refresh(ticket)
     return ticket
 
-@app.get("/api/v1/tickets", response_model=List[TicketResponse])
+@app.get("/api/v1/tickets", response_model=list[TicketResponse])
 def list_tickets(
-    status: Optional[TicketStatus] = None,
+    status: TicketStatus | None = None,
     ctx: AuthenticatedContext = Depends(get_current_user_and_tenant),
     db: Session = Depends(get_db)
 ):

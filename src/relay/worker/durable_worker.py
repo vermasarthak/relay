@@ -1,26 +1,36 @@
-import time
-import uuid
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional, List
-from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_
+import uuid
+from datetime import UTC, datetime, timedelta
 
-from relay.models.entities import (
-    Job, JobStatus, JobAttempt, Ticket, TicketStatus, Proposal, ProposalStatus,
-    Approval, ActionReceipt, ActionType, AuditEvent, CustomerAccount, Document, DocumentVersion
-)
-from relay.core.security import compute_args_hash
+from sqlalchemy import and_, or_
+from sqlalchemy.orm import Session
+
 from relay.core.clock import Clock, get_clock
-from relay.services.retriever import EvidenceRetriever
-from relay.services.model_adapter import get_model_provider
-from relay.sandbox.provider import sandbox_provider
 from relay.core.config import settings
+from relay.core.security import compute_args_hash
+from relay.models.entities import (
+    ActionReceipt,
+    ActionType,
+    Approval,
+    AuditEvent,
+    CustomerAccount,
+    Document,
+    Job,
+    JobAttempt,
+    JobStatus,
+    Proposal,
+    ProposalStatus,
+    Ticket,
+    TicketStatus,
+)
+from relay.sandbox.provider import sandbox_provider
+from relay.services.model_adapter import get_model_provider
+from relay.services.retriever import EvidenceRetriever
 
 logger = logging.getLogger("relay.worker")
 
 class DurableWorker:
-    def __init__(self, db: Session, worker_id: Optional[str] = None, lease_duration_seconds: int = 30, clock: Optional[Clock] = None):
+    def __init__(self, db: Session, worker_id: str | None = None, lease_duration_seconds: int = 30, clock: Clock | None = None):
         self.db = db
         self.worker_id = worker_id or f"wrk_{uuid.uuid4().hex[:8]}"
         self.lease_duration_seconds = lease_duration_seconds
@@ -29,7 +39,7 @@ class DurableWorker:
     def utc_now(self) -> datetime:
         return self.clock.now()
 
-    def claim_next_job(self) -> Optional[Job]:
+    def claim_next_job(self) -> Job | None:
         """
         Atomically leases the next available job using lease fencing tokens.
         Ensures concurrent workers cannot double-claim or execute stale leases.
@@ -68,7 +78,7 @@ class DurableWorker:
         self.db.refresh(job)
         return job
 
-    def execute_job(self, job_id: str, expected_fencing_token: Optional[int] = None) -> bool:
+    def execute_job(self, job_id: str, expected_fencing_token: int | None = None) -> bool:
         job = self.db.query(Job).filter(Job.id == job_id).first()
         now = self.utc_now()
         if not job or job.worker_id != self.worker_id:
@@ -79,8 +89,8 @@ class DurableWorker:
             return False
 
         if job.leased_until:
-            leased_until = job.leased_until if job.leased_until.tzinfo else job.leased_until.replace(tzinfo=timezone.utc)
-            current_now = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+            leased_until = job.leased_until if job.leased_until.tzinfo else job.leased_until.replace(tzinfo=UTC)
+            current_now = now if now.tzinfo else now.replace(tzinfo=UTC)
             if leased_until < current_now:
                 logger.warning(f"Worker {self.worker_id} attempting to execute expired lease on job {job_id}")
                 return False

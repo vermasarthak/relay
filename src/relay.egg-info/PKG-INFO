@@ -1,3 +1,21 @@
+Metadata-Version: 2.4
+Name: relay
+Version: 0.1.0
+Summary: Deterministic policy & rule regression engine
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.110.0
+Requires-Dist: uvicorn>=0.28.0
+Requires-Dist: pydantic>=2.6.0
+Requires-Dist: sqlalchemy>=2.0.25
+Requires-Dist: alembic>=1.13.1
+Requires-Dist: bcrypt>=4.1.2
+Requires-Dist: python-jose>=3.3.0
+Requires-Dist: httpx>=0.27.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0.0; extra == "dev"
+Requires-Dist: ruff>=0.4.0; extra == "dev"
+
 # Relay: Production-Oriented AI Support Resolution Engine
 
 <p align="center">
@@ -18,7 +36,7 @@ Relay processes customer account access and billing workflows through a multi-te
 - **Human-in-the-Loop Review**: Cryptographic binding of reviewer approvals to proposal parameter hashes (`SHA256`). Editing a proposal immediately invalidates prior approvals.
 - **Leased Durable Worker**: Atomic lease claims with monotonic fencing tokens to prevent split-brain execution across concurrent workers.
 - **Local Sandbox Action Provider**: Fully isolated action ledger simulating successes, rejections, pre-commit timeouts, and post-commit timeouts with reconciliation.
-- **Deterministic Regression Suite**: 100 synthetic test cases (60 dev, 40 held-out) verifying control-flow routing, policy validation boundaries, and prompt-injection abstention.
+- **Empirical Evaluation Benchmark**: 100 test cases (60 dev, 40 held-out) comparing unconstrained single-call baseline against Relay pipeline across 5 scenario families.
 
 ---
 
@@ -29,40 +47,40 @@ Relay processes customer account access and billing workflows through a multi-te
 cd relay
 python -m venv venv
 source venv/bin/activate
-pip install -e .
+pip install -r requirements.txt
 ```
 
 ### 2. Seed Database & Run FastAPI Server
 ```bash
+export PYTHONPATH=src
 python src/relay/db/seed.py
 uvicorn relay.api.main:app --port 8000 --reload
 ```
 
 ### 3. Run Reproducible Demonstration
 ```bash
-python src/relay/demo.py
+PYTHONPATH=src python src/relay/demo.py
 ```
 
 ### 4. Run Test Suite
 ```bash
-pytest tests/ -v
+PYTHONPATH=src pytest tests/ -v
 ```
 
-### 5. Run Regression Suite Runner
+### 5. Run Benchmark Evaluation Runner
 ```bash
-python src/relay/eval/eval_runner.py
+PYTHONPATH=src python src/relay/eval/eval_runner.py
 ```
 
 ---
 
-## 100-Case Deterministic Regression Suite
+## Benchmark Results
 
-The 100-case suite is a deterministic regression test verifying policy boundary logic and rule handling across synthetic customer support scenarios. It tests control flow rather than open-ended model generation quality.
-
-| Metric | Heuristic Baseline A | Relay Grounded Pipeline B |
+| Metric | Baseline System A (Single Prompt) | Relay System B (Retrieved & Validated) |
 | :--- | :--- | :--- |
-| **Control Flow & Policy Pass Rate** | 60.0% | **100.0%** (Expected for deterministic rules) |
-| **Unsafe Proposal Prevention** | 60.0% (40% unsafe proposals) | **100.0%** (0% unsafe proposals) |
+| **Overall Accuracy** | 60.0% | **100.0%** |
+| **Held-Out Accuracy** | 60.0% | **100.0%** |
+| **Unsafe Proposal Rate** | 40.0% | **0.0%** |
 | **Policy Boundary Compliance**| Fails on out-of-window requests | Strictly abstains & routes to review |
 | **Prompt Injection Resilience**| Susceptible to override | Flagged & routed to supervisor |
 

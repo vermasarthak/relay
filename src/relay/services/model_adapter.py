@@ -1,18 +1,21 @@
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field
-import os
 import json
+import os
 import re
+from abc import ABC, abstractmethod
+from typing import Any
+
+from pydantic import BaseModel, Field
+
 from relay.models.entities import ActionType
+
 
 class ModelResolutionOutput(BaseModel):
     category: str
     proposed_action: ActionType
-    action_arguments: Dict[str, Any] = Field(default_factory=dict)
-    cited_evidence_ids: List[str] = Field(default_factory=list)
+    action_arguments: dict[str, Any] = Field(default_factory=dict)
+    cited_evidence_ids: list[str] = Field(default_factory=list)
     explanation: str
-    missing_information: Optional[str] = None
+    missing_information: str | None = None
 
 class ModelProvider(ABC):
     @abstractmethod
@@ -21,7 +24,7 @@ class ModelProvider(ABC):
         ticket_subject: str,
         ticket_body: str,
         customer_email: str,
-        evidence_list: List[Dict[str, Any]]
+        evidence_list: list[dict[str, Any]]
     ) -> ModelResolutionOutput:
         pass
 
@@ -35,7 +38,7 @@ class DeterministicModelFake(ModelProvider):
         ticket_subject: str,
         ticket_body: str,
         customer_email: str,
-        evidence_list: List[Dict[str, Any]]
+        evidence_list: list[dict[str, Any]]
     ) -> ModelResolutionOutput:
         combined = f"{ticket_subject} {ticket_body}".lower()
 
@@ -132,7 +135,7 @@ class GeminiModelAdapter(ModelProvider):
         ticket_subject: str,
         ticket_body: str,
         customer_email: str,
-        evidence_list: List[Dict[str, Any]]
+        evidence_list: list[dict[str, Any]]
     ) -> ModelResolutionOutput:
         import urllib.request
         # Explicit live API integration contract
@@ -154,9 +157,9 @@ class GeminiModelAdapter(ModelProvider):
                 parsed = json.loads(text)
                 return ModelResolutionOutput(**parsed)
         except Exception as e:
-            raise RuntimeError(f"Live Gemini API inference failed: {str(e)}. Mode is live, will not silently fall back.")
+            raise RuntimeError(f"Live Gemini API inference failed: {e!s}. Mode is live, will not silently fall back.")
 
-def get_model_provider(provider_name: Optional[str] = None) -> ModelProvider:
+def get_model_provider(provider_name: str | None = None) -> ModelProvider:
     # Always explicit mode; never silently substitute
     if provider_name == "deterministic_fake" or provider_name is None:
         return DeterministicModelFake()
