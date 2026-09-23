@@ -1,0 +1,31 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: relay
+      POSTGRES_PASSWORD: relay_password
+      POSTGRES_DB: relay_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://relay:relay_password@db:5432/relay_db
+      SECRET_KEY: relay_prod_secure_secret_key_32_chars_minimum_len
+      ENABLE_DEMO_MODE: "false"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    command: ["uvicorn", "relay.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+volumes:
+  postgres_data:
